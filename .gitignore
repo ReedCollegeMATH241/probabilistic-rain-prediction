@@ -1,7 +1,20 @@
+.Rhistory
+
+# Ignore downloaded files.
 sampleSubmission.csv
 test_2014.csv.zip
 train_2013.csv.zip
 sample_solution.py
 
+# Ignore unzipped files.
 test_2014.csv
 train_2013.csv
+
+# Ignore Domino-related files.
+*.big-data
+datafiles/
+.dominoignore
+domino.log
+
+# Ignore cleaned data sets.
+cleaned_train_2013.csv
