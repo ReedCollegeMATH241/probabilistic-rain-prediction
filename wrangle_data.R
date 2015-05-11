@@ -1,8 +1,9 @@
 library(dplyr)
 library(stringr)
+library(data.table)
 
 # Import training set.
-train_2013 <- read.csv("train_2013.csv", stringsAsFactors = FALSE) %>%
+train_2013 <- fread("train_2013.csv", stringsAsFactors = FALSE) %>%
   tbl_df()
 
 # The data as provided has multiple values per cell separated by spaces.
@@ -54,10 +55,56 @@ CleanDataFrame <- function(df) {
   return(new.df)
 }
 
-# We have the function, let's run it on the data set!
-# On a random subset of 1% of the data set, this took my computer 110 seconds to execute.
-# I will be using a cloud instance hosted by Domino Data Lab (http://www.dominodatalab.com) to run the actual script.
-cleaned.train_2013 <- CleanDataFrame(train_2013)
+RemoveBadData <- function(df) {
+
+  num.col <- ncol(df)
+  
+  # Convert entries to numeric type.
+  for (i in 1:num.col) {
+    df[, i] <- df[, i] %>% as.numeric()
+  }
+  
+  # Set "missing data" as NA.
+  df[df == -99900] <- NA
+  df[df == -99901] <- NA
+  df[df == -99903] <- NA
+  df[df == 999] <- NA
+  
+  # HydrometeorType is a factor, not numeric.
+  df$HydrometeorType <- as.factor(df$HydrometeorType)
+  
+  # We are not concerned with rainfall beyond 69 mm.
+  df <- filter(df, Expected < 70)
+  
+  return(df)
+}
+
+# We have the functions, let's run it on the data set!
+# Strangely enough, even though I expected the function to take O(n) to run, where n is the number of rows, it doesn't.
+# On a random subset of 0.1% of the data set, it took my computer 10 seconds to execute.
+# A random subset of 0.5% of the data set however, took nearly 3 minutes to execute.
+# I will thus be splitting up the data set into 1127 chunks, with each chunk except for the last having 1000 rows.
+
+num.row <- nrow(train_2013)
+interval.begin <- seq(from = 1, to = num.row, by = 1000)
+interval.end <- seq(from = 1000, to = num.row, by = 1000) %>% c(num.row)
+num.chunks <- (num.row / 1000) %>% ceiling()
+
+# The following lines can be used to procure the first 10000 rows of data to do preliminary work with.
+# Unfortunately, as order of the rows matter, a random subset is not appropriate.
+# interval.begin <- seq(from = 1, to = 10000, by = 1000)
+# interval.end <- seq(from = 1000, to = 10000, by = 1000)
+# num.chunks <- 10
+
+cleaned.train <- list()
+for (i in 1:num.chunks) {
+  cleaned.train[[i]] <- train_2013 %>%
+    slice(interval.begin[i]:interval.end[i]) %>%
+    CleanDataFrame() %>%
+    RemoveBadData()
+}
+
+cleaned.train.complete <- do.call("rbind", cleaned.train)
 
 # Export cleaned data as a CSV file.
-write.csv(cleaned.train_2013, file = "cleaned_train_2013.csv", row.names = FALSE)
+write.csv(cleaned.train.complete, file = "cleaned_train_2013.csv", row.names = FALSE)

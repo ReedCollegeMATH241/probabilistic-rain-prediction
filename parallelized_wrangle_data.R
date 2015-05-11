@@ -1,7 +1,11 @@
+# This script is no longer up-to-date as I was getting poor performance from the parallelization.
+# I have decided to shelf it for now, and concentrate on making wrangle_data.R better.
+
 # This script is essentially wrangle_data.R modified such that it will make use of multiple cores.
 # I elected not to use the piping operator from dplyr to save time on loading the package in each parallel session of R.
 
 library(stringr)
+library(data.table)
 library(foreach)
 library(doParallel)
 library(parallel)
@@ -12,8 +16,7 @@ cl <- makeCluster(numCores)
 registerDoParallel(cl)
 
 # Import training set.
-train_2013 <- read.csv("train_2013.csv", stringsAsFactors = FALSE) %>%
-  tbl_df()
+train_2013 <- fread("train_2013.csv", stringsAsFactors = FALSE)
 
 # The data as provided has multiple values per cell separated by spaces.
 # This is because there are multiple observations within each time block.
@@ -52,7 +55,7 @@ ParallelCleanDataFrame <- function(df) {
 }
 
 # We have the function, let's run it on the data set!
-# On a random subset of 1% of the data set, this took my computer 110 seconds to execute.
+# On a random subset of 0.1% of the data set, this took my computer 10 seconds to execute.
 # I will be using a cloud instance hosted by Domino Data Lab (http://www.dominodatalab.com) to run the actual script.
 cleaned.train_2013 <- ParallelCleanDataFrame(train_2013)
 
