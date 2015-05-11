@@ -98,11 +98,17 @@ num.chunks <- (num.row / 1000) %>% ceiling()
 # num.chunks <- 10
 
 cleaned.train <- list()
+start.time <- proc.time()
 for (i in 1:num.chunks) {
   cleaned.train[[i]] <- train_2013 %>%
     slice(interval.begin[i]:interval.end[i]) %>%
     CleanDataFrame() %>%
     RemoveBadData()
+  if ((i %% 10) == 0) {
+    time.elapsed <- proc.time() - start.time
+    cat("Cleaning complete on row ", i, " of ", num.chunks, ".\n",
+        "Estimated time remaining: ", (time.elapsed[3] * ((num.chunks - i) / i)) / 60, " minutes.\n", sep = "")
+  }
 }
 
 cleaned.train.complete <- do.call("rbind", cleaned.train)
