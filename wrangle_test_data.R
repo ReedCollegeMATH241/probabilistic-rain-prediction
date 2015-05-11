@@ -2,8 +2,8 @@ library(dplyr)
 library(stringr)
 library(data.table)
 
-# Import training set.
-train_2013 <- fread("train_2013.csv", stringsAsFactors = FALSE) %>%
+# Import test set.
+test_2014 <- fread("test_2014.csv", stringsAsFactors = FALSE) %>%
   tbl_df()
 
 # The data as provided has multiple values per cell separated by spaces.
@@ -27,7 +27,7 @@ NumberOfObservations <- function(df) {
 
 # Function to take a data frame in the original format, clean it, and return the cleaned data frame.
 CleanDataFrame <- function(df) {
-
+  
   num.row <- nrow(df)
   num.col <- ncol(df)
   
@@ -41,11 +41,9 @@ CleanDataFrame <- function(df) {
   for (i in 1:num.row) {
     # Transfer the "Id" data into the new data frame.
     new.df[(cumulative.num.obsv[i] + 1):cumulative.num.obsv[i + 1], 1] <- df[i, 1]
-    # Transfer the "Expected" data into the new data frame.
-    new.df[(cumulative.num.obsv[i] + 1):cumulative.num.obsv[i + 1], 20] <- df[i, 20]
-    # Note that the first and 20th columns are the only columns without multiple values in each cell.
-
-    for (j in 2:(num.col - 1)) {
+    # Note that the first column is the only columns without multiple values in each cell.
+    
+    for (j in 2:num.col) {
       new.df[(cumulative.num.obsv[i] + 1):cumulative.num.obsv[i + 1], j] <-
         df[i, j] %>%
         as.character() %>%
@@ -57,7 +55,7 @@ CleanDataFrame <- function(df) {
 }
 
 RemoveBadData <- function(df) {
-
+  
   num.col <- ncol(df)
   
   # Convert entries to numeric type.
@@ -74,19 +72,13 @@ RemoveBadData <- function(df) {
   # HydrometeorType is a factor, not numeric.
   df$HydrometeorType <- as.factor(df$HydrometeorType)
   
-  # We are not concerned with rainfall beyond 69 mm.
-  df <- filter(df, Expected < 70)
-  
   return(df)
 }
 
 # We have the functions, let's run it on the data set!
-# Strangely enough, even though I expected the function to take O(n) to run, where n is the number of rows, it doesn't.
-# On a random subset of 0.1% of the data set, it took my computer 10 seconds to execute.
-# A random subset of 0.5% of the data set however, took nearly 3 minutes to execute.
-# I will thus be splitting up the data set into 1127 chunks, with each chunk except for the last having 1000 rows.
+# I will be splitting up the data set into 631 chunks, with each chunk except for the last having 1000 rows.
 
-num.row <- nrow(train_2013)
+num.row <- nrow(test_2014)
 interval.begin <- seq(from = 1, to = num.row, by = 1000)
 interval.end <- seq(from = 1000, to = num.row, by = 1000) %>% c(num.row)
 num.chunks <- (num.row / 1000) %>% ceiling()
@@ -97,15 +89,15 @@ num.chunks <- (num.row / 1000) %>% ceiling()
 # interval.end <- seq(from = 1000, to = 10000, by = 1000)
 # num.chunks <- 10
 
-cleaned.train <- list()
+cleaned.test <- list()
 for (i in 1:num.chunks) {
-  cleaned.train[[i]] <- train_2013 %>%
+  cleaned.test[[i]] <- test_2014 %>%
     slice(interval.begin[i]:interval.end[i]) %>%
     CleanDataFrame() %>%
     RemoveBadData()
 }
 
-cleaned.train.complete <- do.call("rbind", cleaned.train)
+cleaned.test.complete <- do.call("rbind", cleaned.test)
 
 # Export cleaned data as a CSV file.
-write.csv(cleaned.train.complete, file = "cleaned_train_2013.csv", row.names = FALSE)
+write.csv(cleaned.test.complete, file = "cleaned_test_2014.csv", row.names = FALSE)
