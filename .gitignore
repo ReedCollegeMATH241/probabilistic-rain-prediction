@@ -15,6 +15,9 @@ train_2013.csv
 datafiles/
 .dominoignore
 domino.log
+domino.last.dump.Rda
+domino.workspace.RData
+results/stdout.txt
 
 # Ignore cleaned data sets.
 cleaned_train_2013.csv
