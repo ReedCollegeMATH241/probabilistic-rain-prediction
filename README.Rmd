@@ -1,0 +1,202 @@
+<!-- WARNING: Code will not compile without first downloading the various datasets. -->
+<!-- WARNING: H2O requires Java Runtime Environment 8 to run. However it might appear that JRE refuses to run inside a .Rmd file. I have set the relevant code chunks to not evaluate. -->
+
+---
+title: "How Much Did It Rain?"
+subtitle: "Predicting Probabilistic Distribution of Hourly Rain Given Polarimetric Radar Measurements"
+author: "Joewie Koh"
+date: "May 12, 2015"
+output:
+  html_document:
+    keep_md: true
+---
+
+```{r, echo = FALSE, message = FALSE}
+library(dplyr)
+library(stringr)
+library(data.table)
+library(ggplot2)
+library(h2o)
+```
+
+## Introduction
+
+This project is based off a Kaggle competition titled "How much did it rain?". More information can be found on the Kaggle webpage for the competition, at <http://www.kaggle.com/c/how-much-did-it-rain/>.
+
+### Motivation
+
+Information about the spatial and temporal distribution of rain is extremely useful, especially in agriculture. Due to the infeasibility of taking physical measurements with a high resolution, remote sensing is a tempting tool with which to estimate rainfall distributions. Typically, radar observations are corroborated with physical measurements to provide a point estimate of rainfall at a certain location. However, this provides limited information for modeling purposes; a probabilistic distribution of rainfall amounts would preserve much more information and be more helpful for hydrological and agronomic models.
+
+### Source and Format of Data
+
+The data is provided by the Artificial Intelligence Committee of the American Meteorological Society through Kaggle, and can be downloaded from the webpage referenced above. There are two datasets involved: a training set and a test set. The datasets come in the form of CSV files, with columns corresponding to raw data from the radars. A polarimetric radar uses radio waves that are polarized in perpendicular directions to infer the size of rain drops and the type of hydrometeor (e.g. rain, hail, snow, etc) by comparing the reflectivities of the two polarizations. The datasets contain three main data types: raw data from the radars (e.g. time, differential phase, differential reflectivity, etc.), derived quantities (e.g. hydrometeor type, predicted rain rates, etc.), and actual observations from rain gauges.
+
+Unfortunately, there are multiple values in each column, separated by spaces. This is because each row represents an hour in a certain location, and there can be multiple radar observations within an hour at the same location. There are also two radars observing each location. An example of 4 rows of selected columns is shown below.
+
+```{r, echo = FALSE}
+train_2013.sample <- fread("train_2013.csv", stringsAsFactors = FALSE, showProgress = FALSE,
+                           nrows = 4, select = c("Id", "RR1", "Expected"))
+print(train_2013.sample)
+```
+
+As can be seen, the datasets would need to be cleaned before further analysis can take place.
+
+### Objective
+
+The competition requires that results be submitted in a CSV file, with predicted cumulative probabilities for rainfall of between 0 and 69 mm, for each location (Id). Entries will be scored with the Continuous Ranked Probability Score, with details available on the Kaggle competition webpage.
+
+## Data Wrangling
+
+The CSV files provided by Kaggle are cleaned in wrangle_training_data.R and wrangle_test_data.R, and the two scripts took me 10 hours to execute. I attempted to write a parallelized version of the scripts, but the parallelization overhead turned out to outweigh the performance benefits.
+
+There is definitely a more efficient way to clean the data, but since I have already cleaned it (however painfully), I will focus my efforts elsewhere.
+
+## Exploratory Data Analysis
+
+Let's do some EDA with a 10% random subset of the training set.
+
+```{r, echo = FALSE}
+train.cleaned <- fread("cleaned_train_2013.csv", stringsAsFactors = FALSE, showProgress = FALSE) %>%
+  tbl_df()
+# The response variable is required to be integer as we want the deep learning algorithm to classify and not regress.
+train.cleaned$Expected <- as.integer(train.cleaned$Expected)
+train.cleaned$HydrometeorType <- as.integer(train.cleaned$HydrometeorType)
+
+# Calculate means of each column for each observation ID and convert HydrometeorType back into a factor.
+# I'm using a rather crude (and not necessarily 100% accurate) way of taking the mode of Hydrometeor type, sorry.
+train <- train.cleaned %>%
+  group_by(Id) %>%
+  summarise_each(funs(mean(., na.rm = TRUE))) %>%
+  mutate(HydrometeorType = as.factor(round(HydrometeorType)))
+
+# Let's get rid of bad outliers from LogWaterVolume.
+train <- filter(train, LogWaterVolume < -8)
+train <- filter(train, LogWaterVolume > -15)
+
+train.subset <- sample_frac(train, 0.1)
+```
+
+Let's first look at a histogram of rain gauge readings.
+
+```{r, echo = FALSE}
+ggplot(train.subset, aes(x = Expected)) + geom_histogram(binwidth = 1) +
+  labs(title = "Histogram of Rain Gauge Readings", x = "Rain Gauge Reading", y = "Count")
+```
+
+Notice that the vast majority of the rain gauges read zero. In fact, I will claim that the probabilities of getting rainfall above 12mm is negligible in the view of the scoring algorithm. Ignoring the upper range of rainfall will allow us to get better resolution for the lower range.
+
+```{r, echo = FALSE}
+train <- filter(train, Expected < 13)
+```
+
+Next, let's look at the relationship between hydrometeor type and rain gauge reading.
+
+```{r, echo = FALSE, warning = FALSE}
+ggplot(train.subset, aes(x = HydrometeorType, y = Expected)) + ylim(0, 10) + geom_boxplot() +
+  labs(title = "Boxplots of Rain Gauge Readings for each Hydrometeor Type",
+       x = "Hydrometeor Type", y = "Rain Gauge Reading")
+```
+
+It appears that hydrometeor type is indeed a decent predictor of rainfall. Types 10, 11, 12, and 13 represent dry snow, wet snow, ice crystals, and graupel respectively. Interestingly, types 1 to 5 represent various intensities of rain, but do not seem to result in high rain gauge readings. It is also important to note that this boxplot does not reflect the number of counts of each hydrometeor type.
+
+Now, let's look at whether the different rainfall rates derived from the radar readings correlate to actual rain gauge readings.
+
+```{r, echo = FALSE, warning = FALSE}
+ggplot(train.subset, aes(x = RR1, y = Expected)) + ylim(0, 2.5) + xlim(0, 5) +
+  geom_point(size = 1, position = "jitter") + geom_smooth() +
+  labs(title = "Scatterplot of Rain Gauge Readings against Rainfall Rate from HCA-based Algorithm",
+       x = "RR1", y = "Rain Gauge Reading")
+ggplot(train.subset, aes(x = RR2, y = Expected)) + ylim(0, 2.5) + xlim(0, 5) +
+  geom_point(size = 1, position = "jitter") + geom_smooth() +
+  labs(title = "Scatterplot of Rain Gauge Readings against Rainfall Rate from Zdr-based Algorithm",
+       x = "RR2", y = "Rain Gauge Reading")
+ggplot(train.subset, aes(x = RR3, y = Expected)) + ylim(0, 2.5) + xlim(0, 5) +
+  geom_point(size = 1, position = "jitter") + geom_smooth() +
+  labs(title = "Scatterplot of Rain Gauge Readings against Rainfall Rate from Kdp-based Algorithm",
+       x = "RR3", y = "Rain Gauge Reading")
+```
+
+The first two (RR1 and RR2) look slightly promising, but the third one (RR3) looks quite useless.
+
+Finally, let's look at LogWaterVolume, which is a measure for how much of the radar pixel is filled with water droplets.
+
+```{r, echo = FALSE, warning = FALSE}
+ggplot(train.subset, aes(x = LogWaterVolume, y = Expected)) + ylim(0, 5) + xlim(-15, -8) +
+  geom_point(size = 1, position = "jitter") + geom_smooth() +
+  labs(title = "Scatterplot of Rain Gauge Readings against LogWaterVolume",
+       x = "LogWaterVolume", y = "Rain Gauge Reading")
+```
+
+Looks pretty useful!
+
+## Deep Learning
+
+I am using the H2O package to implement a deep neural network.
+
+```{r, eval = FALSE}
+# Initialize a local H2O cluster using all available cores.
+local.h2o <- h2o.init(nthreads = -1)
+
+# Link the data sets to the H2O cluster.
+train.h2o <- as.h2o(local.h2o, train, key = "train")
+test.h2o <- as.h2o(local.h2o, test, key = "test")
+
+# Split the training data set 70:30 for training and validation.
+train.h2o.split <- h2o.splitFrame(train.h2o, ratios = 0.7, shuffle = TRUE)
+
+# EDA suggests HydrometeorType, RR1, RR2, and LogWaterVolume as predictors.
+
+# Train a deep neural network model.
+model <- h2o.deeplearning(x = c(6, 8, 9, 17),                         # column numbers for predictors
+                          y = 20,                                     # column number for response variable
+                          data = train.h2o.split[[1]],                # training set
+                          validation = train.h2o.split[[2]],          # validation set
+                          activation = "TanhWithDropout",             # activation function
+                          input_dropout_ratio = 0.2,
+                          hidden_dropout_ratio = c(0.5, 0.5, 0.5),
+                          balance_classes = FALSE,
+                          hidden = c(50, 50, 50),
+                          epochs = 200,                               # number of passes to carry out over training set
+                          classification = TRUE)                      # for probability distribution instead of point estimate
+
+# Use the model on the test set.
+prediction <- h2o.predict(model, test.h2o) %>% as.data.frame()
+```
+
+We now have a probability vector for each Id. However, Kaggle requires submissions to be made in a certain format.
+
+```{r, eval = FALSE}
+PrepareForSubmission <- function(df) {
+  
+  num.col <- ncol(df)
+  num.row <- nrow(df)
+  
+  # Create a vector of column names that's dictated by the submission format.
+  submission.colnames <- vector()
+  for (i in 1:70)
+    submission.colnames[i] <- paste0("Predicted", i-1)
+  submission.colnames <- c("Id", submission.colnames)
+  
+  for (j in 3:num.col) {
+    df[, j] <- df[, (j - 1)] + df[, j]
+  }
+  
+  col.of.ones <- rep(1, num.row)
+  for(j in (num.col + 1):71) {
+    df <- cbind(df, col.of.ones)
+  }
+  
+  colnames(df) <- submission.colnames
+  df$Id <- test$Id
+  
+  return(df)
+}
+
+prediction.prepared <- PrepareForSubmission(prediction)
+```
+
+Here are a few cells of the final data frame that will be exported as CSV to be submitted.
+
+```{r, eval = FALSE}
+prediction.prepared[1:10, 1:10]
+```
