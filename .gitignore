@@ -21,3 +21,4 @@ results/stdout.txt
 
 # Ignore cleaned data sets.
 cleaned_train_2013.csv
+cleaned_test_2014.csv
